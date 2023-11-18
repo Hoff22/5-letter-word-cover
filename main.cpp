@@ -1,16 +1,19 @@
 #include <bits/stdc++.h>
-#include <concurrent_vector.h>
 #include <fstream>
 #include <chrono>
+#include "trie.h"
 
 #define fi first
 #define se second
 #define MOD 1000000007
-#define N 67108864
+#define N ((1<<27)-1)
+#define MAX_W 700000
  
 using namespace std;
 
 bool seen[N+1];
+vector<string> words;
+pair<int,int> words_clean[MAX_W];
 
 vector<string> open_file(string file_name, int word_size){
     ifstream file(file_name);
@@ -39,7 +42,7 @@ vector<string> open_file(string file_name, int word_size){
     return s;
 }
 
-int getWordHash(string& s){
+int getWordHash(const string& s){
     int res = 0;
 
     for(int i = 0; i < s.size(); i++){
@@ -54,42 +57,9 @@ int hashPopCount(int hs){
     return __builtin_popcount(hs);
 }
 
-#define LOG_MAX 25
-
-struct bit_trie{
-    int sz, child[2];
-    int string_idx;
-
-    bit_trie(){
-        this->sz = 0;
-        this->child[0] = this->child[1] = -1;
-    }
-};
-
-// O(log(N));
-void insert(int n, int w_idx, vector<bit_trie>& t){
-
-    int cur = 0;
-
-    for(int i = LOG_MAX; i >= 0; i--){
-        
-        t[cur].sz++;
-
-        if(t[cur].child[0] == -1){
-            t[cur].child[0] = t.size();
-            t.push_back(bit_trie());
-            t[cur].child[1] = t.size();
-            t.push_back(bit_trie());
-        }
-
-        cur = t[cur].child[(n>>i) & 1];
-    }
-
-    t[cur].sz++;
-    t[cur].string_idx = w_idx;
+int lsb(int mask) {
+    return mask & (-mask);
 }
-
-
 
 int main(int argc, char** argv){ 
     ios_base::sync_with_stdio(false);
@@ -99,12 +69,11 @@ int main(int argc, char** argv){
 
     auto begin = chrono::high_resolution_clock::now();
 
-    vector<string> words = open_file(argv[1], 5);
-    sort(words.begin(), words.end());
+    words = open_file(argv[1], 5);
     
     int big_n = words.size();
-    
-    vector<pair<int,int>> words_clean(words.size(), {0,-1});
+
+    // <------------- removing anagrams --------------->
 
     memset(seen, 0, sizeof(seen));
 
@@ -130,8 +99,85 @@ int main(int argc, char** argv){
     int n = 0;
     for(int i = 0; words_clean[i].fi > 0; i++) n++;
 
+    // <--------------- find pairs --------------->
+
+    vector<pair<int,int>> pairs;
+    vector<pair<int,int>> pairs_map(N+1, {-1,-1});
+    set<pair<int,int>> seen_set;
+
+    for(int i = 0; i < n; i++){
+        for(int j = i+1; j < n; j++){
+            if((words_clean[i].fi & words_clean[j].fi) == 0){
+                pairs.push_back({i,j});
+            }
+        }
+    }
+
+    vector<bit_trie> bt = {bit_trie()};
+
+    for(int i = 0; i < pairs.size(); i++){
+        int a,b;
+        tie(a,b) = pairs[i];
+        int hs = words_clean[a].fi | words_clean[b].fi;
+        insert(hs, i, bt);
+        pairs_map[hs] = {a, b};
+    }
+
+    // <--------------- finding quadruples --------------->
+
+    vector<tuple<int,int,int,int>> quads(N+1, {-1,-1,-1,-1});
+    
+    long long cnt_d = 0;
+
+    #pragma omp parallel for
+    for(auto [a,b] : pairs){
+        int hs = words_clean[a].fi | words_clean[b].fi;
+
+        int mask = N-hs;
+
+        vector<int> submasks;
+        for (int submask = mask; submask; submask = (submask - 1) & mask) submasks.push_back(submask);
+
+        #pragma omp parallel for
+        for (int j = 0; j < submasks.size(); j++) {
+            int sub = submasks[j];
+            if(__builtin_popcount(sub) != 10) continue;
+            int c,d;
+            tie(c, d) = pairs_map[sub];
+            if(c == -1) continue;
+            while(get<0>(quads[cnt_d]) != -1) cnt_d++;
+            quads[cnt_d] = {a,b,c,d};
+            cnt_d++;
+        }   
+        // if(cnt_d % 10000 == 0){
+        //     auto end = chrono::high_resolution_clock::now();
+        //     cout << "-> time taken: " << chrono::duration_cast<chrono::milliseconds>(end-begin).count() << "ms " << cnt_d << endl;
+        // }
+        // cnt_d++;
+    }
+
+    // <--------------- timing measures --------------->
+
     auto end = chrono::high_resolution_clock::now();
+        
+    // char ant = 0;
+    // for(int i = 0; i < n; i++){
+    //     if(words[words_clean[i].se][0] != ant){
+    //         cout << words[words_clean[i].se][0];
+    //     }
+    //     ant = words[words_clean[i].se][0];
+    // }
+    // cout << "\n";
+
+    // for(auto [i, j] : pairs){
+    //     cout << words[words_clean[i].se] << ", " << words[words_clean[j].se] << endl;
+    // }
+
+    cout << "\n";
+
     cout << "-> words excluding anagrams: " << n << endl;
+    cout << "-> number of pairs found: " << pairs.size() << endl;
+    cout << "-> number of nodes in trie: " << bt.size() << endl;
     cout << "-> time taken: " << chrono::duration_cast<chrono::milliseconds>(end-begin).count() << "ms" << endl;
 
     return 0;
